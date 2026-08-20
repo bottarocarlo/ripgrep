@@ -110,6 +110,7 @@ pub(crate) struct LowArgs {
     pub(crate) unrestricted: usize,
     pub(crate) vimgrep: bool,
     pub(crate) with_filename: Option<bool>,
+    pub(crate) write: bool,
 }
 
 /// A "special" mode that supersedes everything else.

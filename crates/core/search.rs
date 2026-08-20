@@ -22,6 +22,7 @@ struct Config {
     search_zip: bool,
     binary_implicit: grep::searcher::BinaryDetection,
     binary_explicit: grep::searcher::BinaryDetection,
+    replace: Option<crate::replace::Replacer>,
 }
 
 impl Default for Config {
@@ -32,6 +33,7 @@ impl Default for Config {
             search_zip: false,
             binary_implicit: grep::searcher::BinaryDetection::none(),
             binary_explicit: grep::searcher::BinaryDetection::none(),
+            replace: None,
         }
     }
 }
@@ -159,6 +161,21 @@ impl SearchWorkerBuilder {
         self.config.binary_explicit = detection;
         self
     }
+
+    /// Set the replacement to write back to each file that is searched.
+    ///
+    /// When set, after a haystack has been searched and its results printed,
+    /// the file itself is rewritten with every match replaced. This
+    /// corresponds to giving `-W/--write` along with `-r/--replace`.
+    ///
+    /// By default, no files are modified.
+    pub(crate) fn replace(
+        &mut self,
+        replacement: Option<Vec<u8>>,
+    ) -> &mut SearchWorkerBuilder {
+        self.config.replace = replacement.map(crate::replace::Replacer::new);
+        self
+    }
 }
 
 /// The result of executing a search.
@@ -262,7 +279,20 @@ impl<W: WriteColor> SearchWorker<W> {
         } else if self.should_decompress(path) {
             self.search_decompress(path)
         } else {
-            self.search_path(path)
+            let result = self.search_path(path)?;
+            // Note that rewriting the file has to come *after* searching it.
+            // Otherwise the search above would be looking at the contents we
+            // just replaced. We also only bother when we know there's a match,
+            // since otherwise there is nothing to replace.
+            //
+            // The other branches above are all excluded from rewriting on
+            // purpose: we can't rewrite stdin, and when a preprocessor or
+            // decompression is in play, what got searched isn't what's in the
+            // file.
+            if result.has_match() {
+                self.replace_path(path)?;
+            }
+            Ok(result)
         }
     }
 
@@ -348,6 +378,22 @@ impl<W: WriteColor> SearchWorker<W> {
             #[cfg(feature = "pcre2")]
             PCRE2(ref m) => search_path(m, searcher, printer, path),
         }
+    }
+
+    /// Rewrite the given file path with each of its matches replaced, if
+    /// in-place replacement is enabled. Otherwise, this does nothing.
+    fn replace_path(&mut self, path: &Path) -> io::Result<()> {
+        use self::PatternMatcher::*;
+
+        let Some(ref replacer) = self.config.replace else { return Ok(()) };
+        let searcher = &mut self.searcher;
+        let count = match self.matcher {
+            RustRegex(ref m) => replacer.replace_path(m, searcher, path)?,
+            #[cfg(feature = "pcre2")]
+            PCRE2(ref m) => replacer.replace_path(m, searcher, path)?,
+        };
+        log::trace!("{}: wrote {count} replacement(s)", path.display());
+        Ok(())
     }
 
     /// Executes a search on the given reader, which may or may not correspond

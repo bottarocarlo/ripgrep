@@ -1172,3 +1172,174 @@ rgtest!(stop_on_nonmatch, |dir: Dir, mut cmd: TestCommand| {
     cmd.args(&["--stop-on-nonmatch", "[235]"]);
     eqnice!("test:line2\ntest:line3\n", cmd.stdout());
 });
+
+// -W/--write applies -r/--replace to the files themselves and not just to
+// what gets printed.
+
+rgtest!(write_replaces_in_file, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\nkeep\nold\n");
+    cmd.args(&["-r", "new", "-W", "old", "test"]);
+    eqnice!("new\nnew\n", cmd.stdout());
+    eqnice!("new\nkeep\nnew\n", dir.read("test"));
+});
+
+rgtest!(write_long_flag, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\n");
+    cmd.args(&["--replace", "new", "--write", "old", "test"]);
+    eqnice!("new\n", cmd.stdout());
+    eqnice!("new\n", dir.read("test"));
+});
+
+// Without --write, -r must leave the file exactly as it found it.
+rgtest!(
+    write_replace_alone_does_not_write,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("test", "old\nkeep\nold\n");
+        cmd.args(&["-r", "new", "old", "test"]);
+        eqnice!("new\nnew\n", cmd.stdout());
+        eqnice!("old\nkeep\nold\n", dir.read("test"));
+    }
+);
+
+// --write on its own has nothing to write, so it's an error rather than a
+// silent no-op.
+rgtest!(
+    write_without_replace_is_an_error,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("test", "old\n");
+        cmd.args(&["-W", "old", "test"]).assert_non_empty_stderr();
+        eqnice!("old\n", dir.read("test"));
+    }
+);
+
+rgtest!(write_negated, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\n");
+    cmd.args(&["-r", "new", "-W", "--no-write", "old", "test"]);
+    eqnice!("new\n", cmd.stdout());
+    eqnice!("old\n", dir.read("test"));
+});
+
+// -w is still --word-regexp, and is unrelated to -W.
+rgtest!(
+    write_short_flag_is_not_word_regexp,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("test", "old older\n");
+        cmd.args(&["-r", "new", "-W", "-w", "old", "test"]);
+        eqnice!("new older\n", cmd.stdout());
+        eqnice!("new older\n", dir.read("test"));
+    }
+);
+
+rgtest!(write_capture_groups, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "foo=bar\nbaz=quux\n");
+    cmd.args(&["-r", "$2=$1", "-W", r"(\w+)=(\w+)", "test"]);
+    eqnice!("bar=foo\nquux=baz\n", cmd.stdout());
+    eqnice!("bar=foo\nquux=baz\n", dir.read("test"));
+});
+
+rgtest!(write_many_matches_per_line, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old old old\n");
+    cmd.args(&["-r", "new", "-W", "old", "test"]);
+    eqnice!("new new new\n", cmd.stdout());
+    eqnice!("new new new\n", dir.read("test"));
+});
+
+rgtest!(write_empty_replacement, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old keep\n");
+    cmd.args(&["-r", "", "-W", "old ", "test"]);
+    eqnice!("keep\n", cmd.stdout());
+    eqnice!("keep\n", dir.read("test"));
+});
+
+// A file with no trailing line terminator keeps not having one.
+rgtest!(write_no_trailing_newline, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "keep\nold");
+    cmd.args(&["-r", "new", "-W", "old", "test"]);
+    eqnice!("new\n", cmd.stdout());
+    eqnice!("keep\nnew", dir.read("test"));
+});
+
+rgtest!(write_case_insensitive, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "OLD\nOld\nold\n");
+    cmd.args(&["-r", "new", "-W", "-i", "old", "test"]);
+    eqnice!("new\nnew\nnew\n", cmd.stdout());
+    eqnice!("new\nnew\nnew\n", dir.read("test"));
+});
+
+// --max-count caps how many matches get replaced, just as it caps how many
+// get printed.
+rgtest!(write_max_count, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\nold\nold\n");
+    cmd.args(&["-r", "new", "-W", "-m1", "old", "test"]);
+    eqnice!("new\n", cmd.stdout());
+    eqnice!("new\nold\nold\n", dir.read("test"));
+});
+
+rgtest!(write_multiline, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "a\nb\nc\nkeep\n");
+    cmd.args(&["-U", "-r", "X", "-W", "(?s)a.+?c", "test"]);
+    eqnice!("X\n", cmd.stdout());
+    eqnice!("X\nkeep\n", dir.read("test"));
+});
+
+// Only the files that actually match are rewritten.
+rgtest!(write_recursive, |dir: Dir, mut cmd: TestCommand| {
+    dir.create_dir("sub");
+    dir.create("sub/match", "old\n");
+    dir.create("sub/nomatch", "keep\n");
+    cmd.args(&["-r", "new", "-W", "old"]);
+    eqnice!("sub/match:new\n", cmd.stdout());
+    eqnice!("new\n", dir.read("sub/match"));
+    eqnice!("keep\n", dir.read("sub/nomatch"));
+});
+
+// Files ignored by the usual filtering rules are not rewritten either.
+rgtest!(write_respects_gitignore, |dir: Dir, mut cmd: TestCommand| {
+    dir.create_dir(".git");
+    dir.create(".gitignore", "ignored\n");
+    dir.create("ignored", "old\n");
+    dir.create("searched", "old\n");
+    cmd.args(&["-r", "new", "-W", "old"]);
+    eqnice!("searched:new\n", cmd.stdout());
+    eqnice!("old\n", dir.read("ignored"));
+    eqnice!("new\n", dir.read("searched"));
+});
+
+// stdin has no file to write back to, so --write just prints as usual.
+rgtest!(write_stdin, |_: Dir, mut cmd: TestCommand| {
+    cmd.args(&["-r", "new", "-W", "old"]);
+    eqnice!("new\n", cmd.pipe(b"old\n"));
+});
+
+// Binary files are reported as matching, but are never rewritten.
+rgtest!(write_binary_is_skipped, |dir: Dir, mut cmd: TestCommand| {
+    dir.create_bytes("test", b"old\n\x00old\n");
+    cmd.args(&["-r", "new", "-W", "old", "test"]);
+    eqnice!(
+        "binary file matches (found \"\\0\" byte around offset 4)\n",
+        cmd.stdout()
+    );
+    eqnice!("old\n\u{0}old\n", dir.read("test"));
+});
+
+// A replacement that changes nothing leaves the file byte for byte identical.
+rgtest!(write_noop_replacement, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\n");
+    cmd.args(&["-r", "old", "-W", "old", "test"]);
+    eqnice!("old\n", cmd.stdout());
+    eqnice!("old\n", dir.read("test"));
+});
+
+// The temporary file used to rewrite a haystack must not be left behind.
+rgtest!(write_leaves_no_temporary_files, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("test", "old\n");
+    cmd.args(&["-r", "new", "-W", "old", "test"]);
+    eqnice!("new\n", cmd.stdout());
+
+    let mut names = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<String>>();
+    names.sort();
+    assert_eq!(vec!["test".to_string()], names);
+});

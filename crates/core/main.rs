@@ -15,6 +15,7 @@ mod flags;
 mod haystack;
 mod index;
 mod logger;
+mod replace;
 mod search;
 
 // Since Rust no longer uses jemalloc by default, ripgrep will, by default,

@@ -142,6 +142,14 @@ impl Dir {
         file.flush()
     }
 
+    /// Read the contents of a file in this directory, or panic on error.
+    #[allow(dead_code)] // not used by every test module
+    pub fn read<P: AsRef<Path>>(&self, name: P) -> String {
+        let path = self.dir.join(name);
+        let bytes = nice_err(&path, fs::read(&path));
+        nice_err(&path, String::from_utf8(bytes))
+    }
+
     /// Remove a file with the given name from this directory.
     pub fn remove<P: AsRef<Path>>(&self, name: P) {
         let path = self.dir.join(name);

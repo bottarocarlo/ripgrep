@@ -532,9 +532,22 @@ $ rg 'fast\s+(?P<word>\w+)' README.md -r 'fast-$word'
 124:Summarizing, `ripgrep` is fast-because:
 ```
 
-It is important to note that ripgrep **will never modify your files**. The
-`--replace` flag only controls ripgrep's output. (And there is no flag to let
-you do a replacement in a file.)
+By itself, `--replace` only controls ripgrep's output and **will never modify
+your files**. To apply the replacement to the files that were searched as well,
+add the `-W/--write` flag:
+
+```
+$ rg 'fast\s+(?P<word>\w+)' README.md -r 'fast-$word' --write
+```
+
+This is the one and only flag that causes ripgrep to modify your files, and
+there is no backup and no undo. Since `--replace` on its own prints exactly the
+replacements that `--write` would make, running the command without `--write`
+first is a reliable way to preview them.
+
+Files with no match are never touched, and neither is anything whose bytes
+ripgrep didn't read directly: standard input, files read through `--pre` or
+`-z/--search-zip`, and binary files.
 
 
 ### Configuration file

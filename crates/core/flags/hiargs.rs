@@ -104,6 +104,7 @@ pub(crate) struct HiArgs {
     types: ignore::types::Types,
     vimgrep: bool,
     with_filename: bool,
+    write: bool,
 }
 
 impl HiArgs {
@@ -121,6 +122,12 @@ impl HiArgs {
         // `low.sort = None` if `supported()` returns an error.
         if let Some(ref sort) = low.sort {
             sort.supported()?;
+        }
+        // Writing replacements back to disk is only meaningful when there is
+        // a replacement to write. Erroring here (instead of quietly doing
+        // nothing) means a typo'd command can't look like it worked.
+        if low.write && low.replace.is_none() {
+            anyhow::bail!("flag --write requires flag --replace");
         }
         // We aggressively ban things from indexing at present.
         if (low.index > 0 || matches!(low.mode, Mode::Index(_)))
@@ -329,6 +336,7 @@ impl HiArgs {
             types,
             vimgrep: low.vimgrep,
             with_filename,
+            write: low.write,
         })
     }
 
@@ -708,13 +716,21 @@ impl HiArgs {
         searcher: grep::searcher::Searcher,
         printer: Printer<W>,
     ) -> anyhow::Result<SearchWorker<W>> {
+        // `--replace` on its own only changes what gets printed. It's
+        // `--write` that asks for the files themselves to be rewritten.
+        let replace = if self.write {
+            self.replace.clone().map(|r| r.into())
+        } else {
+            None
+        };
         let mut builder = SearchWorkerBuilder::new();
         builder
             .preprocessor(self.pre.clone())?
             .preprocessor_globs(self.pre_globs.clone())
             .search_zip(self.search_zip)
             .binary_detection_explicit(self.binary.explicit.clone())
-            .binary_detection_implicit(self.binary.implicit.clone());
+            .binary_detection_implicit(self.binary.implicit.clone())
+            .replace(replace);
         Ok(builder.build(matcher, searcher, printer))
     }
 

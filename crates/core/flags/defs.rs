@@ -149,6 +149,7 @@ pub(super) const FLAGS: &[&dyn Flag] = &[
     &WithFilename,
     &WithFilenameNo,
     &WordRegexp,
+    &Write,
     // DEPRECATED (make them show up last in their respective categories)
     &AutoHybridRegex,
     &NoPcre2Unicode,
@@ -223,6 +224,9 @@ impl LowArgs {
         }
         if self.search_zip {
             return Some(&SearchZip);
+        }
+        if self.write {
+            return Some(&Write);
         }
         None
     }
@@ -6368,8 +6372,9 @@ impl Flag for Replace {
     }
     fn doc_long(&self) -> &'static str {
         r#"
-Replaces every match with the text given when printing results. Neither this
-flag nor any other ripgrep flag will modify your files.
+Replaces every match with the text given when printing results. By itself, this
+flag does not modify your files. To also write the replacement back to the
+files that were searched, add \flag{write}.
 .sp
 Capture group indices (e.g., \fB$\fP\fI5\fP) and names (e.g., \fB$\fP\fIfoo\fP)
 are supported in the replacement string. Capture group indices are numbered
@@ -7945,6 +7950,86 @@ fn test_word_regexp() {
 
     let args = parse_low_raw(["-w", "-x"]).unwrap();
     assert_eq!(Some(BoundaryMode::Line), args.boundary);
+}
+
+/// -W/--write
+#[derive(Debug)]
+struct Write;
+
+impl Flag for Write {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_short(&self) -> Option<u8> {
+        Some(b'W')
+    }
+    fn name_long(&self) -> &'static str {
+        "write"
+    }
+    fn name_negated(&self) -> Option<&'static str> {
+        Some("no-write")
+    }
+    fn doc_category(&self) -> Category {
+        Category::Output
+    }
+    fn doc_short(&self) -> &'static str {
+        r"Write --replace results back to the files."
+    }
+    fn doc_long(&self) -> &'static str {
+        r"
+Apply the replacement given by \flag{replace} to the files that are searched,
+and not only to what is printed. This flag requires \flag{replace}.
+.sp
+\fBWARNING:\fP this is the one and only flag that causes ripgrep to modify your
+files. There is no backup and no undo. Run the same command without this flag
+first to preview exactly which replacements will be made.
+.sp
+Each file that has at least one match is rewritten by writing a new file next
+to it and renaming it into place, so an interrupted run cannot leave a file
+half written. Files without a match are never touched, and neither is a file
+whose replacement would leave its contents unchanged.
+.sp
+Only the files that ripgrep reads directly are rewritten. In particular,
+\fIstdin\fP is never written back, and neither are files read through
+\flag{pre} or \flag{search-zip}, since in those cases the bytes that were
+searched are not the bytes in the file. Binary files are skipped as well,
+unless \flag{text} is given.
+.sp
+Note that the flags that limit what a search reports also limit what gets
+replaced. For example, \flag{max-count} caps how many matches are replaced in
+each file, and with \flag{invert-match} the lines reported have nothing in them
+to replace.
+"
+    }
+
+    fn update(&self, v: FlagValue, args: &mut LowArgs) -> anyhow::Result<()> {
+        args.write = v.unwrap_switch();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_write() {
+    let args = parse_low_raw(None::<&str>).unwrap();
+    assert_eq!(false, args.write);
+
+    let args = parse_low_raw(["--write"]).unwrap();
+    assert_eq!(true, args.write);
+
+    let args = parse_low_raw(["-W"]).unwrap();
+    assert_eq!(true, args.write);
+
+    let args = parse_low_raw(["--write", "--no-write"]).unwrap();
+    assert_eq!(false, args.write);
+
+    let args = parse_low_raw(["--no-write", "-W"]).unwrap();
+    assert_eq!(true, args.write);
+
+    // -w and -W are different flags.
+    let args = parse_low_raw(["-w"]).unwrap();
+    assert_eq!(false, args.write);
+    assert_eq!(Some(BoundaryMode::Word), args.boundary);
 }
 
 fn check_indexing_allowed() -> anyhow::Result<()> {
